@@ -18,8 +18,19 @@ export const WorkEditorView: React.FC<WorkEditorViewProps> = ({ work, onClose, a
   const stylesList = appState.galaStyles || [];
 
   const handleSave = () => {
-    const updatedGames = (appState.galaMyGames || []).map((g: any) => g.id === editingWork.id ? editingWork : g);
-    updateState('galaMyGames', updatedGames);
+    const updatedMyGames = (appState.galaMyGames || []).map((g: any) => g.id === editingWork.id ? editingWork : g);
+    updateState('galaMyGames', updatedMyGames);
+    
+    // Also sync to hotGames and banners if it exists there
+    if (appState.galaHotGames) {
+       const updatedHotGames = appState.galaHotGames.map((g: any) => g.id === editingWork.id ? editingWork : g);
+       updateState('galaHotGames', updatedHotGames);
+    }
+    if (appState.galaBanners) {
+       const updatedBanners = appState.galaBanners.map((g: any) => g.id === editingWork.id ? editingWork : g);
+       updateState('galaBanners', updatedBanners);
+    }
+    
     onClose();
   };
 
@@ -77,7 +88,7 @@ export const WorkEditorView: React.FC<WorkEditorViewProps> = ({ work, onClose, a
 
         <div className="space-y-10 max-w-sm mx-auto pb-24">
           <div className="space-y-4">
-            <label className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Cover / 首页照片 (可重新上传)</label>
+            <label className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Cover / 首页照片</label>
             <div 
               onClick={() => fileInputRef.current?.click()}
               className="relative aspect-[16/9] w-full rounded-2xl overflow-hidden bg-gray-50 cursor-pointer group shadow-sm border border-gray-100"
@@ -88,8 +99,20 @@ export const WorkEditorView: React.FC<WorkEditorViewProps> = ({ work, onClose, a
                 <div className="absolute inset-0 flex items-center justify-center text-gray-300"><ImageIcon className="w-8 h-8"/></div>
               )}
               <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                <Camera className="w-6 h-6 text-white" />
+                <Camera className="w-6 h-6 text-white text-center" />
               </div>
+            </div>
+            <div className="flex gap-2">
+               <input 
+                  type="text" 
+                  value={editingWork.cover || ''} 
+                  onChange={e => setEditingWork({...editingWork, cover: e.target.value})} 
+                  placeholder="或直接粘贴图片URL（推荐外链）" 
+                  className="flex-1 border border-gray-200 bg-transparent py-2 px-3 text-xs rounded-lg outline-none focus:border-[#d49a9f]" 
+               />
+               <button onClick={() => fileInputRef.current?.click()} className="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-xs font-bold whitespace-nowrap">
+                  本地压缩上传
+               </button>
             </div>
           </div>
 
@@ -101,6 +124,24 @@ export const WorkEditorView: React.FC<WorkEditorViewProps> = ({ work, onClose, a
           <div>
             <label className="text-[10px] text-gray-500 font-bold uppercase tracking-widest block mb-2">Introduction / 作品简介</label>
             <textarea value={editingWork.intro || ''} onChange={e => setEditingWork({...editingWork, intro: e.target.value})} className="w-full p-4 bg-gray-50 border border-gray-200 rounded-lg text-sm h-32 resize-none outline-none focus:border-[#d49a9f] leading-relaxed" />
+          </div>
+
+          <div>
+            <label className="text-[10px] text-gray-500 font-bold uppercase tracking-widest block mb-2">Protagonist Mask / 主人公面具 (我)</label>
+            {!appState.galaProtagonists || appState.galaProtagonists.length === 0 ? (
+              <p className="text-xs text-gray-400">暂无面具，在"我的"中配置</p>
+            ) : (
+              <select 
+                value={editingWork.protagonistId || ''} 
+                onChange={e => setEditingWork({...editingWork, protagonistId: e.target.value})}
+                className="w-full border-b border-gray-200 bg-transparent py-2 text-sm font-bold outline-none focus:border-[#d49a9f] text-gray-800"
+              >
+                <option value="">(不使用主人公面具)</option>
+                {appState.galaProtagonists.map((pro: any) => (
+                  <option key={pro.id} value={pro.id}>{pro.name || '未命名面具'}</option>
+                ))}
+              </select>
+            )}
           </div>
 
           <div>

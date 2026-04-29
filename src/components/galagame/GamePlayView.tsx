@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowLeft, Loader2, PlayCircle, LogOut, Settings2, Save, Download, X, Music } from 'lucide-react';
+import { ArrowLeft, Loader2, PlayCircle, LogOut, Settings2, Save, Download, X, Music, History } from 'lucide-react';
 import { GoogleGenAI } from '@google/genai';
 import { cn } from '../../utils/cn';
 
@@ -34,7 +34,17 @@ export const GamePlayView: React.FC<GamePlayViewProps> = ({ game, onClose, appSt
   const [currentChapterIndex, setCurrentChapterIndex] = useState(0);
   const [unlockedChapters, setUnlockedChapters] = useState<number[]>([0]); 
   
-  const protagonistSettings = appState.galaProtagonist || { nameType: 'none', fixedName: '', persona: '' };
+  const protagonistSettings = useMemo(() => {
+     if (game.protagonistId && appState.galaProtagonists) {
+        const found = appState.galaProtagonists.find((p: any) => p.id === game.protagonistId);
+        if (found) return found;
+     }
+     if (appState.galaProtagonists && appState.galaProtagonists.length > 0) {
+        return appState.galaProtagonists[0];
+     }
+     return { nameType: 'none', fixedName: '', persona: '' };
+  }, [game.protagonistId, appState.galaProtagonists]);
+
   const [customPlayerName, setCustomPlayerName] = useState('');
   
   const [lines, setLines] = useState<VNLine[]>([]);
@@ -44,6 +54,8 @@ export const GamePlayView: React.FC<GamePlayViewProps> = ({ game, onClose, appSt
   const [isGenerating, setIsGenerating] = useState(false);
   const [contextLog, setContextLog] = useState<string[]>([]);
   const [achievements, setAchievements] = useState<string[]>([]);
+  
+  const [showHistory, setShowHistory] = useState(false);
   
   // Track continuous state across lines
   const [globalScene, setGlobalScene] = useState<string>(game.cover || '');
@@ -81,7 +93,7 @@ export const GamePlayView: React.FC<GamePlayViewProps> = ({ game, onClose, appSt
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const STORAGE_KEY_PREFIX = 'gala_progress_';
 
-  const saveProgress = (auto = false) => {
+  const saveProgress = (auto = false, slot: number = 0) => {
     if (lines.length === 0) return;
     const progress = {
       lines,
@@ -91,14 +103,17 @@ export const GamePlayView: React.FC<GamePlayViewProps> = ({ game, onClose, appSt
       globalScene,
       currentChapterIndex,
       unlockedChapters,
-      customPlayerName
+      customPlayerName,
+      timestamp: Date.now()
     };
-    updateState(STORAGE_KEY_PREFIX + game.id, progress);
-    if (!auto) alert('✅ 存档成功！(已保存至本地)');
+    const key = slot === 0 ? STORAGE_KEY_PREFIX + game.id : STORAGE_KEY_PREFIX + game.id + '_' + slot;
+    updateState(key, progress);
+    if (!auto) alert('✅ 存档成功！(已保存至本地档位 ' + slot + ')');
   };
 
-  const loadProgress = () => {
-    const state = appState[STORAGE_KEY_PREFIX + game.id];
+  const loadProgress = (slot: number = 0) => {
+    const key = slot === 0 ? STORAGE_KEY_PREFIX + game.id : STORAGE_KEY_PREFIX + game.id + '_' + slot;
+    const state = appState[key];
     if (state && state.lines && state.lines.length > 0) {
       setLines(state.lines);
       setCurrentIndex(state.currentIndex);
@@ -110,15 +125,15 @@ export const GamePlayView: React.FC<GamePlayViewProps> = ({ game, onClose, appSt
       setCustomPlayerName(state.customPlayerName || '');
       setScreen('playing');
       setIsMenuOpen(false);
-      alert('✅ 读档成功！');
+      if (slot !== 0) alert('✅ 读档成功！');
     } else {
-      alert('❌ 没有找到当前作品的存档！(首次游玩请点击开始游戏)');
+      if (slot !== 0) alert('❌ 没有找到该档位的存档！');
     }
   };
 
   useEffect(() => {
     if (screen === 'playing' && lines.length > 0) {
-      saveProgress(true);
+      saveProgress(true, 0); // auto save to slot 0
     }
   }, [lines, currentIndex, screen]);
 
@@ -169,14 +184,31 @@ export const GamePlayView: React.FC<GamePlayViewProps> = ({ game, onClose, appSt
 
   const handleStartGame = (index: number = 0, isContinue: boolean = false) => {
     if (isContinue) {
-      const state = appState[STORAGE_KEY_PREFIX + game.id];
+      const state = appState[STORAGE_KEY_PREFIX + game.id]; // auto-save is slot 0 (no suffix)
       if (state && state.lines && state.lines.length > 0) {
-        loadProgress();
+        loadProgress(0);
         return;
       } else {
-        alert('没有找到当前作品的存档，将从默认章节开始。');
+        alert('没有找到当前作品的自动存档。将从默认章节开始。');
         index = Math.max(0, unlockedChapters.length - 1);
       }
+    } else {
+       // If starting game, they asked "don't rewrite, replay the plot"
+       // So we load the state from auto-save if it exists, but reset currentIndex to 0
+       const state = appState[STORAGE_KEY_PREFIX + game.id];
+       if (state && state.lines && state.lines.length > 0) {
+          setLines(state.lines);
+          setCurrentIndex(0); // Restart from beginning of generated text
+          setOptions(state.options);
+          setContextLog(state.contextLog);
+          setGlobalScene(state.globalScene);
+          setCurrentChapterIndex(state.currentChapterIndex);
+          setUnlockedChapters(state.unlockedChapters);
+          setCustomPlayerName(state.customPlayerName || '');
+          setScreen('playing');
+          setIsMenuOpen(false);
+          return;
+       }
     }
 
     setCurrentChapterIndex(index);
@@ -241,8 +273,6 @@ ${proDesc}
     
     setContextLog(prev => [...prev, '[选项] 玩家选择了：' + userChoiceText]);
     
-    setLines([]);
-    setCurrentIndex(0);
     setOptions([]);
     setIsGenerating(true);
 
@@ -312,9 +342,12 @@ ${contextStr}
       let newLogs = [...contextLog, '玩家行动: ' + userChoice];
       
       let currentSceneFallback = globalScene;
-      let lastCharImg = currentCharacterImage; // Fallback to last character image across generation
+      let lastCharImg = '';
+      if (lines.length > 0 && lines[lines.length - 1].portraitImage) {
+         lastCharImg = lines[lines.length - 1].portraitImage || '';
+      }
 
-      if (pLines.length === 0) {
+      if (!parsed.lines || parsed.lines.length === 0) {
          pLines.push({ type: 'narrator', name: '', text: '系统: 剧本生成异常（内容为空），请重试。', sceneImage: currentSceneFallback, portraitImage: lastCharImg });
          if (!parsed.options || parsed.options.length === 0) {
              setOptions([{ text: '重试前一选项', hint: '重新生成当前分支' }]);
@@ -392,12 +425,18 @@ ${contextStr}
 
       setGlobalScene(currentSceneFallback);
       setContextLog(newLogs);
-      setLines(pLines);
-      setCurrentIndex(0);
+      setLines(prev => {
+         const updated = [...prev, ...pLines];
+         // If we had previous lines, we advance by 1 to show the newly generated line.
+         // If it's the very first time (prev length is 0), then index should naturally be 0.
+         setCurrentIndex(prev.length === 0 ? 0 : prev.length);
+         return updated;
+      });
     } catch (e) {
       console.error('Game Engine Parse Error:', e);
-      setLines([{ type: 'narrator', name: '', text: '系统: 剧本生成失败，请检查API配置或稍后再试。', sceneImage: globalScene }]);
+      setLines(prev => [...prev, { type: 'narrator', name: '', text: '系统: 剧本生成失败，请检查API配置或稍后再试。', sceneImage: globalScene }]);
       setOptions([{ text: '重试', hint: '' }]);
+      setCurrentIndex(prev => prev.length);
     } finally {
       setIsGenerating(false);
     }
@@ -447,10 +486,10 @@ ${contextStr}
                 <h1 className="text-4xl font-bold text-white tracking-widest drop-shadow-xl">{game.title}</h1>
                 <p className="text-white/70 mt-4 text-sm leading-relaxed tracking-wider line-clamp-3 drop-shadow-md">{game.intro}</p>
                 <div className="mt-16 flex flex-col gap-6">
-                  {['开始游戏', '继续', '章节', '番外篇', '设置'].map(btn => (
+                  {['开始游戏', '继续 (读档)', '章节', '番外篇', '设置'].map(btn => (
                     <button key={btn} onClick={() => {
                         if (btn === '开始游戏') handleStartGame(0);
-                        else if (btn === '继续') handleStartGame(0, true);
+                        else if (btn === '继续 (读档)') handleStartGame(0, true);
                         else if (btn === '章节') setScreen('chapters');
                         else if (btn === '番外篇') alert('番外内容还未解锁。');
                         else if (btn === '设置') alert('请前往系统主界面进行全局设置。');
@@ -580,6 +619,9 @@ ${contextStr}
                   <ArrowLeft className="w-4 h-4" />
                 </button>
                 <div className="flex gap-4 pointer-events-auto relative z-50">
+                   <button onClick={() => setShowHistory(true)} className="text-white/70 hover:text-white bg-black/40 backdrop-blur-md p-2 rounded-full shadow-lg border border-white/10">
+                      <History className="w-5 h-5" />
+                   </button>
                    {chapters[currentChapterIndex]?.bgms?.length > 0 && (
                      <button onClick={toggleBgm} className="text-white/70 hover:text-white bg-black/40 backdrop-blur-md p-2 rounded-full shadow-lg border border-white/10">
                         <Music className={cn("w-5 h-5", isPlayingBgm ? "text-[#d49a9f]" : "text-white/50 line-through")} />
@@ -596,19 +638,60 @@ ${contextStr}
                  <audio ref={audioRef} src={chapters[currentChapterIndex].bgms[currentBgmIndex]} loop />
               )}
 
+              {/* Logs Overlay */}
+              <AnimatePresence>
+                {showHistory && (
+                  <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }} className="absolute inset-0 z-[120] bg-white/95 backdrop-blur-3xl flex flex-col pointer-events-auto">
+                    <div className="flex justify-between items-center p-6 border-b border-gray-100">
+                      <h3 className="text-gray-900 font-bold tracking-widest text-lg">剧情记录</h3>
+                      <button onClick={() => setShowHistory(false)} className="text-gray-400 hover:text-gray-900 transition-colors"><X className="w-6 h-6"/></button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                       {contextLog.map((log, idx) => (
+                          <div key={idx} className={cn("text-base leading-relaxed tracking-wider", log.startsWith('[选项]') ? "text-[#d49a9f] font-bold" : "text-gray-700")}>
+                             {log}
+                          </div>
+                       ))}
+                       {contextLog.length === 0 && <div className="text-center text-gray-400 mt-20 tracking-widest text-sm">暂无记录</div>}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
               {/* In-Game Menu overlay */}
               <AnimatePresence>
                 {isMenuOpen && (
-                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-[100] bg-black/80 backdrop-blur-lg flex items-center justify-center p-4">
-                     <div className="bg-gray-900 border border-white/20 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl relative pointer-events-auto">
-                        <div className="p-6 border-b border-white/10 flex justify-between items-center bg-white/5">
-                           <h3 className="text-white font-bold tracking-widest">系统菜单</h3>
-                           <button onClick={() => setIsMenuOpen(false)} className="text-white/50 hover:text-white"><X className="w-5 h-5"/></button>
+                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-[100] bg-black/40 backdrop-blur-lg flex items-center justify-center p-4 shadow-2xl pointer-events-auto">
+                     <div className="bg-white border border-gray-100 rounded-3xl w-full max-w-sm overflow-hidden shadow-2xl relative shadow-[0_20px_50px_rgba(0,0,0,0.1)]">
+                        <div className="p-6 border-b border-gray-50 flex justify-between items-center bg-gray-50/50">
+                           <h3 className="text-gray-900 font-bold tracking-widest text-lg">系统菜单</h3>
+                           <button onClick={() => setIsMenuOpen(false)} className="text-gray-400 hover:text-gray-900 transition-colors bg-white rounded-full p-1 shadow-sm"><X className="w-5 h-5"/></button>
                         </div>
-                        <div className="p-4 flex flex-col gap-3">
-                           <button onClick={() => saveProgress(false)} className="flex items-center justify-center gap-2 p-4 bg-white/5 hover:bg-[#d49a9f]/20 border border-white/10 rounded-xl text-white tracking-widest transition-colors"><Save className="w-4 h-4"/> 存档 (Save)</button>
-                           <button onClick={() => loadProgress()} className="flex items-center justify-center gap-2 p-4 bg-white/5 hover:bg-[#d49a9f]/20 border border-white/10 rounded-xl text-white tracking-widest transition-colors"><Download className="w-4 h-4"/> 读档 (Load)</button>
-                           <button onClick={() => { setIsMenuOpen(false); setScreen('home'); }} className="flex items-center justify-center gap-2 p-4 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-white/70 hover:text-white tracking-widest transition-colors mt-4">返回标题界面</button>
+                        
+                        {/* Save Slots */}
+                        <div className="p-6">
+                           <div className="text-xs text-gray-400 font-bold tracking-[0.2em] mb-4 uppercase">Saves</div>
+                           <div className="space-y-3">
+                             {[1, 2, 3].map(slot => {
+                                const slotData = appState[STORAGE_KEY_PREFIX + game.id + '_' + slot];
+                                return (
+                                  <div key={slot} className="flex flex-col gap-2 p-3 border border-gray-100 rounded-2xl bg-gray-50">
+                                    <div className="flex justify-between items-center">
+                                      <span className="text-xs font-bold text-gray-700">档案 {slot}</span>
+                                      <span className="text-[10px] text-gray-400">{slotData ? new Date(slotData.timestamp).toLocaleString() : '空'}</span>
+                                    </div>
+                                    <div className="flex gap-2">
+                                      <button onClick={() => saveProgress(false, slot)} className="flex-1 py-2 bg-white hover:bg-gray-50 border border-gray-200 rounded-xl text-gray-700 text-xs tracking-widest transition-all font-bold">存档</button>
+                                      <button onClick={() => loadProgress(slot)} disabled={!slotData} className={cn("flex-1 py-2 rounded-xl text-xs tracking-widest transition-all font-bold", slotData ? "bg-[#d49a9f] hover:bg-[#c59095] text-white shadow-sm" : "bg-gray-100 text-gray-400 cursor-not-allowed")}>读档</button>
+                                    </div>
+                                  </div>
+                                );
+                             })}
+                           </div>
+                        </div>
+
+                        <div className="p-4 border-t border-gray-50 bg-gray-50/50">
+                           <button onClick={() => { setIsMenuOpen(false); setScreen('home'); }} className="w-full flex items-center justify-center gap-2 p-4 bg-white hover:bg-gray-50 border border-gray-200 rounded-2xl text-gray-600 hover:text-gray-900 tracking-widest transition-all font-bold shadow-sm">返回标题界面</button>
                         </div>
                      </div>
                   </motion.div>
@@ -618,25 +701,26 @@ ${contextStr}
               {/* Classic Visual Novel Dialogue Box */}
               <div className="absolute bottom-0 left-0 right-0 px-4 pb-6 sm:px-12 sm:pb-8 z-30 flex flex-col justify-end items-center select-none pointer-events-none h-[30vh]">
                  {isGenerating ? (
-                    <div className="w-full max-w-5xl h-full flex items-center justify-center bg-black/50 backdrop-blur-md rounded-xl border border-white/20">
-                       <Loader2 className="w-8 h-8 text-white/50 animate-spin" />
+                    <div className="w-full max-w-5xl h-full flex flex-col items-center justify-center bg-white/90 backdrop-blur-2xl rounded-2xl border border-white/50 shadow-[0_8px_30px_rgb(0,0,0,0.05)]">
+                       <Loader2 className="w-8 h-8 text-[#d49a9f] animate-spin mb-4" />
+                       <div className="text-xs tracking-[0.3em] font-bold text-gray-400 uppercase">Generating</div>
                     </div>
                  ) : currentLine ? (
-                    <div className="w-full max-w-5xl h-full relative bg-black/50 backdrop-blur-md border-[1.5px] border-white/20 rounded-xl p-6 sm:p-8 shadow-2xl pointer-events-auto">
+                    <div className="w-full max-w-5xl h-full relative bg-white/90 backdrop-blur-2xl border border-white/50 rounded-2xl p-6 sm:p-8 shadow-[0_20px_50px_rgba(0,0,0,0.1)] pointer-events-auto">
                        {currentLine.type !== 'narrator' && currentLine.name && (
-                          <div className="absolute -top-5 left-6 sm:left-10 bg-gradient-to-r from-[#e8b5be] to-[#d49a9f] px-6 py-1.5 rounded-lg text-white font-bold tracking-widest shadow-xl border border-white/20">
+                          <div className="absolute -top-5 left-6 sm:left-10 bg-[#d49a9f] px-6 py-2 rounded-xl text-white font-bold tracking-widest shadow-lg border border-[#c59095]">
                              {currentLine.name}
                           </div>
                        )}
                        <div className={cn(
-                          'text-lg sm:text-xl leading-[1.8] tracking-wider mt-2 transition-all',
-                          currentLine.type === 'narrator' ? 'text-white/80 italic text-center px-8' : 'text-white'
+                          'text-lg sm:text-xl leading-[1.8] tracking-wider mt-4 transition-all overflow-y-auto h-[calc(100%-2rem)]',
+                          currentLine.type === 'narrator' ? 'text-gray-500 italic text-center px-8 flex items-center justify-center' : 'text-gray-900'
                        )}>
                           {currentLine.text}
                        </div>
                        
                        {!isLineEnd && (
-                          <div className="absolute bottom-4 right-6 sm:right-8 animate-bounce text-white/70">
+                          <div className="absolute bottom-4 right-6 sm:right-8 animate-bounce text-[#d49a9f]">
                              <PlayCircle className="w-6 h-6" />
                           </div>
                        )}
