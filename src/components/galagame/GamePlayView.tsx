@@ -56,6 +56,7 @@ export const GamePlayView: React.FC<GamePlayViewProps> = ({ game, onClose, appSt
   const [achievements, setAchievements] = useState<string[]>([]);
   
   const [showHistory, setShowHistory] = useState(false);
+  const [optionsGeneratedCount, setOptionsGeneratedCount] = useState(0);
   
   // Track continuous state across lines
   const [globalScene, setGlobalScene] = useState<string>(game.cover || '');
@@ -104,6 +105,7 @@ export const GamePlayView: React.FC<GamePlayViewProps> = ({ game, onClose, appSt
       currentChapterIndex,
       unlockedChapters,
       customPlayerName,
+      optionsGeneratedCount,
       timestamp: Date.now()
     };
     const key = slot === 0 ? STORAGE_KEY_PREFIX + game.id : STORAGE_KEY_PREFIX + game.id + '_' + slot;
@@ -123,6 +125,7 @@ export const GamePlayView: React.FC<GamePlayViewProps> = ({ game, onClose, appSt
       setCurrentChapterIndex(state.currentChapterIndex);
       setUnlockedChapters(state.unlockedChapters);
       setCustomPlayerName(state.customPlayerName || '');
+      setOptionsGeneratedCount(state.optionsGeneratedCount || 0);
       setScreen('playing');
       setIsMenuOpen(false);
       if (slot !== 0) alert('✅ 读档成功！');
@@ -205,6 +208,7 @@ export const GamePlayView: React.FC<GamePlayViewProps> = ({ game, onClose, appSt
           setCurrentChapterIndex(state.currentChapterIndex);
           setUnlockedChapters(state.unlockedChapters);
           setCustomPlayerName(state.customPlayerName || '');
+          setOptionsGeneratedCount(state.optionsGeneratedCount || 0);
           setScreen('playing');
           setIsMenuOpen(false);
           return;
@@ -225,6 +229,8 @@ export const GamePlayView: React.FC<GamePlayViewProps> = ({ game, onClose, appSt
     setCurrentIndex(0);
     setOptions([]);
     setContextLog([]);
+    setOptionsGeneratedCount(0);
+    setGlobalScene(game.cover || '');
     setIsGenerating(true);
 
     const chapter = chapters[index] || { title: '启程', desc: '游戏的开端' };
@@ -232,14 +238,16 @@ export const GamePlayView: React.FC<GamePlayViewProps> = ({ game, onClose, appSt
     let worldViewDesc = game.worldview ? '【世界观】：' + game.worldview.background : '';
     let currChapterDesc = '【当前章节】：' + chapter.title + '。小节梗概：' + chapter.desc;
     let proDesc = '【主人公设定】：' + (protagonistSettings.persona || '默认女主') + '。名称：' + (getPlayerName() || '玩家');
+    const maxOptionsCount = chapter.maxOptionsCount || 5;
+    const isLastTurn = optionsGeneratedCount >= maxOptionsCount - 1;
     
-    const initPrompt = `你是一个女性向视觉小说(乙女向Galgame)游戏引擎。默认攻略角色主要为男性。
+    let initPrompt = `你是一个女性向视觉小说(乙女向Galgame)游戏引擎。默认攻略角色主要为男性。
 游戏名称：${game.title}
 ${worldViewDesc}
 ${currChapterDesc}
 ${proDesc}
 
-请生成本章开头的剧情（约10-15幕详细对话或描写），然后给出2-3个玩家选项卡供用户选择。
+请生成本章开头的剧情（约10-15幕详细对话或描写）${!isLastTurn ? '，然后给出2-3个玩家选项卡供用户选择。' : '。**注意：本章节限定为没有选项分支（纯视觉小说阅读模式），请不要生成 options，并正常推进剧情或标记 "ending": "True" 以结束本章。**'}
 要求结构：
 1. 一句话或一个动作作为单独的一幕（Line）。
 2. 角色说的话用 type: "character"。对话加上引号。
@@ -247,6 +255,7 @@ ${proDesc}
 4. 旁白(描述场景、心理等，对主人公用第二人称你)用 type: "narrator"。
 5. 需要切换场景时填写 sceneKeyword。
 6. 角色说话或出现时填写 charKeyword 和 charEmotion。
+7. 如果达到结局或结束，返回 "ending": "True" 且无 options。
 
 必须严格返回JSON，格式如下（不要包裹在markdown内，只返回JSON字符串）：
 {
@@ -277,16 +286,18 @@ ${proDesc}
     setIsGenerating(true);
 
     const contextStr = contextLog.slice(-15).join('\n');
+    const maxOptionsCount = chapters[currentChapterIndex]?.maxOptionsCount || 5;
+    const isLastTurn = optionsGeneratedCount >= maxOptionsCount - 1;
     
-    const prompt = `你是一个女性向视觉小说(乙女向Galgame)游戏引擎。
+    let prompt = `你是一个女性向视觉小说(乙女向Galgame)游戏引擎。
 玩家做出了选择：${userChoiceText}
     
 之前的剧情摘要：
 ${contextStr}
 
-请根据选择继续生成后续剧情（10-15幕），并再次提供新的选项。
+请根据选择继续生成后续剧情（10-15幕）${!isLastTurn ? '，并再次提供新的选项。' : '。**由于已达到本章节限定长度，请不要再生成新的选项(即 options 留空或不返回 options)，并逐步收尾本章剧情，可以在 JSON 添加 "ending": "True" 以标记本章结束。**'}
 - 选项可能影响好感度并在剧情中体现男主反应，或者导向支线。
-- 如果达成结局，可以在 JSON 添加 "ending": "True" 或 "Bad"，此时可不要 options。
+- 如果达成结局或结束，请在 JSON 添加 "ending": "True" 或 "Bad"，此时必须不要返回 options。
 - 如果触发特定成就，可以在JSON添加 "achievementsUnlocked": ["成就1名称"]。
 
 必须严格遵守以下纯JSON格式返回，不要有任何多余的markdown或说明文字：
@@ -415,7 +426,11 @@ ${contextStr}
            }
          }
       } else {
-        setOptions(parsed.options || []);
+        const generatedOptions = parsed.options || [];
+        setOptions(generatedOptions);
+        if (generatedOptions.length > 0) {
+           setOptionsGeneratedCount(prev => prev + 1);
+        }
       }
 
       if (parsed.achievementsUnlocked && Array.isArray(parsed.achievementsUnlocked)) {
@@ -476,16 +491,16 @@ ${contextStr}
           )}
 
           {screen === 'home' && (
-            <motion.div key="home" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="absolute inset-0 z-40 bg-black">
-              <img src={game.cover || 'https://images.unsplash.com/photo-1542204165-65bf26472b9b?auto=format&fit=crop&q=80'} className="absolute inset-0 w-full h-full object-cover opacity-60" />
-              <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-black/40 to-transparent" />
-              <button onClick={onClose} className="absolute top-6 left-6 text-white/50 hover:text-white z-50 p-2">
+            <motion.div key="home" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="absolute inset-0 z-40 bg-[#fdfbfb]">
+              <img src={game.cover || 'https://images.unsplash.com/photo-1542204165-65bf26472b9b?auto=format&fit=crop&q=80'} className="absolute inset-0 w-full h-full object-cover opacity-30" />
+              <div className="absolute inset-0 bg-gradient-to-r from-white/90 via-white/50 to-transparent" />
+              <button onClick={onClose} className="absolute top-6 left-6 text-gray-400 hover:text-gray-900 z-50 p-2 transition-colors">
                 <LogOut className="w-5 h-5" />
               </button>
-              <div className="absolute top-1/4 left-16 max-w-md">
-                <h1 className="text-4xl font-bold text-white tracking-widest drop-shadow-xl">{game.title}</h1>
-                <p className="text-white/70 mt-4 text-sm leading-relaxed tracking-wider line-clamp-3 drop-shadow-md">{game.intro}</p>
-                <div className="mt-16 flex flex-col gap-6">
+              <div className="absolute top-1/4 left-10 sm:left-16 max-w-md">
+                <h1 className="text-3xl sm:text-4xl font-bold text-gray-900 tracking-widest drop-shadow-sm leading-tight">{game.title}</h1>
+                <p className="text-gray-600 mt-6 text-sm leading-relaxed tracking-wider line-clamp-3 bg-white/50 backdrop-blur-md p-4 rounded-xl border border-white/50">{game.intro}</p>
+                <div className="mt-12 flex flex-col gap-5">
                   {['开始游戏', '继续 (读档)', '章节', '番外篇', '设置'].map(btn => (
                     <button key={btn} onClick={() => {
                         if (btn === '开始游戏') handleStartGame(0);
@@ -494,10 +509,9 @@ ${contextStr}
                         else if (btn === '番外篇') alert('番外内容还未解锁。');
                         else if (btn === '设置') alert('请前往系统主界面进行全局设置。');
                       }}
-                      className="text-left text-white/80 hover:text-white text-lg tracking-[0.5em] font-bold group flex items-center"
+                      className="text-left text-gray-500 hover:text-[#d49a9f] hover:translate-x-2 text-lg tracking-[0.5em] font-bold transition-all duration-300"
                     >
-                      <span className="w-0 overflow-hidden group-hover:w-6 transition-all duration-300 opacity-0 group-hover:opacity-100"><PlayCircle className="w-4 h-4"/></span>
-                      <span className="group-hover:translate-x-2 transition-transform">{btn}</span>
+                      {btn}
                     </button>
                   ))}
                 </div>
@@ -506,19 +520,19 @@ ${contextStr}
           )}
 
           {screen === 'name-input' && (
-            <motion.div key="name-input" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="absolute inset-0 z-50 bg-black/90 backdrop-blur-md flex flex-col items-center justify-center">
-              <div className="max-w-md w-full p-8 bg-white/5 border border-white/10 rounded-2xl text-center space-y-8">
-                 <h2 className="text-2xl text-white tracking-widest font-bold">你的名字是？</h2>
+            <motion.div key="name-input" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="absolute inset-0 z-50 bg-white/90 backdrop-blur-xl flex flex-col items-center justify-center">
+              <div className="max-w-md w-full p-10 bg-white shadow-[0_20px_60px_rgba(0,0,0,0.05)] border border-[#fcefee] rounded-3xl text-center space-y-10">
+                 <h2 className="text-xl text-gray-800 tracking-[0.3em] font-bold">你的名字是？</h2>
                  <input 
                    type="text" 
                    value={customPlayerName}
                    onChange={e => setCustomPlayerName(e.target.value)}
-                   className="w-full bg-transparent border-b-2 border-white/30 text-white text-center text-xl py-2 focus:outline-none focus:border-white transition-colors"
-                   placeholder="输入姓名"
+                   className="w-full bg-transparent border-b-2 border-gray-100 text-gray-900 text-center text-xl py-3 outline-none focus:border-[#d49a9f] transition-colors placeholder:text-gray-200"
+                   placeholder="请输入姓名"
                  />
                  <button onClick={() => {
                     if (customPlayerName.trim()) startChapter(currentChapterIndex);
-                 }} className="px-8 py-3 bg-white text-black font-bold tracking-widest rounded-full hover:bg-gray-200">
+                 }} className="px-10 py-3 bg-[#d49a9f] text-white font-bold tracking-widest rounded-2xl hover:bg-[#c59095] shadow-lg shadow-[#d49a9f]/20 transition-all">
                    确认并开始
                  </button>
               </div>
@@ -526,18 +540,18 @@ ${contextStr}
           )}
 
           {screen === 'chapters' && (
-            <motion.div key="chapters" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="absolute inset-0 z-40 bg-black/90 backdrop-blur-md p-8 flex flex-col">
-              <button onClick={() => setScreen('home')} className="mb-8 text-white/50 hover:text-white flex items-center gap-2 text-sm tracking-widest w-fit">
+            <motion.div key="chapters" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="absolute inset-0 z-40 bg-[#fdfbfb]/95 backdrop-blur-xl p-6 sm:p-12 flex flex-col">
+              <button onClick={() => setScreen('home')} className="mb-6 text-gray-400 hover:text-gray-900 flex items-center gap-2 text-sm tracking-widest w-fit font-bold transition-colors">
                 <ArrowLeft className="w-4 h-4" /> 返回
               </button>
-              <h2 className="text-2xl text-white tracking-[0.3em] font-bold mb-8">章节选择</h2>
+              <h2 className="text-xl text-[#d49a9f] tracking-[0.3em] font-bold mb-10 pl-2 border-l-4 border-[#d49a9f]">章节选择</h2>
               <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-6 pb-20 overflow-y-auto">
                 {chapters.map((chap: any, idx: number) => {
                   const isUnlocked = unlockedChapters.includes(idx);
                   return (
-                    <button key={idx} onClick={() => isUnlocked && handleStartGame(idx)} disabled={!isUnlocked} className={cn('p-6 text-left border rounded-lg transition-all flex flex-col gap-2', isUnlocked ? 'bg-white/5 border-white/20 hover:bg-white/10' : 'bg-black/50 border-white/5 opacity-50')}>
-                      <span className="text-xs uppercase font-mono text-white/50">Chapter {idx + 1}</span>
-                      <span className="text-lg font-bold text-white tracking-widest">{chap.title}</span>
+                    <button key={idx} onClick={() => isUnlocked && handleStartGame(idx)} disabled={!isUnlocked} className={cn('p-6 text-left border rounded-2xl transition-all flex flex-col gap-3 relative overflow-hidden group', isUnlocked ? 'bg-white border-[#fcefee] hover:border-[#d49a9f] shadow-sm hover:shadow-md' : 'bg-gray-50 border-gray-100 opacity-50')}>
+                      <span className="text-[10px] uppercase font-bold tracking-[0.2em] text-gray-300 group-hover:text-[#d49a9f] transition-colors">Chapter {String(idx + 1).padStart(2, '0')}</span>
+                      <span className="text-base font-bold text-gray-800 tracking-widest">{chap.title}</span>
                     </button>
                   )
                 })}
@@ -597,7 +611,7 @@ ${contextStr}
                         <button 
                           key={i}
                           onClick={(e) => { e.stopPropagation(); handleOptionSelect(opt); }}
-                          className="w-full p-4 bg-black/70 hover:bg-[#d49a9f]/30 border-2 border-white/20 hover:border-[#d49a9f] text-white text-center rounded-xl tracking-widest transition-all relative group shadow-xl backdrop-blur-md"
+                          className="w-full p-4 bg-white/95 hover:bg-gray-50 border border-gray-200 hover:border-[#d49a9f] text-gray-800 text-center rounded-2xl tracking-widest transition-all relative group shadow-[0_10px_40px_rgba(0,0,0,0.08)] backdrop-blur-xl"
                         >
                            <span className="relative z-10 font-bold sm:text-lg">{opt.text}</span>
                            {opt.hint && <div className="text-xs text-[#d49a9f] mt-1.5 font-normal opacity-0 group-hover:opacity-100 transition-opacity">{opt.hint}</div>}
@@ -605,7 +619,7 @@ ${contextStr}
                      )) : (
                         <button 
                           onClick={(e) => { e.stopPropagation(); setScreen('chapters'); }}
-                          className="w-full p-4 bg-black/70 hover:bg-[#d49a9f]/20 border-2 border-[#d49a9f] text-white text-center rounded-xl tracking-widest transition-all shadow-xl backdrop-blur-md"
+                          className="w-full p-4 bg-white/95 hover:bg-[#fcefee] border border-[#d49a9f] text-[#d49a9f] text-center rounded-2xl tracking-widest transition-all shadow-[0_10px_40px_rgba(0,0,0,0.08)] backdrop-blur-xl"
                         >
                            <span className="font-bold sm:text-lg">本节结束 (返回章节列表)</span>
                         </button>

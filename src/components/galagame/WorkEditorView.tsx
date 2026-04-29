@@ -53,6 +53,7 @@ export const WorkEditorView: React.FC<WorkEditorViewProps> = ({ work, onClose, a
       id: Date.now(),
       title: `第${chapters.length + 1}章`,
       desc: '', // 内容描述
+      maxOptionsCount: 5, // 选项出现次数
       bgms: [], // 音乐URL
       branchEndings: [''], // 分支结局
       trueEnding: '' // 真实结局
@@ -205,6 +206,11 @@ export const WorkEditorView: React.FC<WorkEditorViewProps> = ({ work, onClose, a
                   <div>
                     <label className="text-[9px] text-gray-400 font-bold uppercase tracking-widest block mb-1">内容描述 (AI 生成参考)</label>
                     <textarea value={chap.desc} onChange={e => updateChapter(cIdx, 'desc', e.target.value)} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl text-xs h-20 resize-none outline-none focus:border-[#d49a9f] transition-all" placeholder="主角来到新的小镇，遇见了..." />
+                  </div>
+
+                  <div>
+                    <label className="text-[9px] text-gray-400 font-bold uppercase tracking-widest block mb-1">选项出现次数 (默认5次)</label>
+                    <input type="number" min="1" max="50" value={chap.maxOptionsCount || 5} onChange={e => updateChapter(cIdx, 'maxOptionsCount', parseInt(e.target.value) || 5)} className="w-1/2 p-2 bg-gray-50 border border-gray-100 rounded-xl text-xs outline-none focus:border-[#d49a9f] transition-all" />
                   </div>
 
                   <div className="space-y-2">
